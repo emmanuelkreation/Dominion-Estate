@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin dashboard — Dominion Home Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,ital@9..144,300..700,0..1&family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<style>
+  :root{
+    --ink:#F3F1E9; --ink-soft:#B7BDB4; --paper:#101A15; --paper-raise:#16241E;
+    --line:#2B372F; --brass:#D3B27C; --emerald:#6FA98C; --emerald-tint:#1B2A22;
+    --red:#E7897E; --red-tint:#3A1E1B; --amber:#E3C27A; --amber-tint:#332C1C;
+    --display:'Fraunces',serif; --body:'Inter',sans-serif; --mono:'IBM Plex Mono',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:var(--body); background:var(--paper); color:var(--ink);}
+  .container{max-width:1180px; margin:0 auto; padding:0 24px;}
+  a{color:inherit;}
+
+  .topbar{border-bottom:1px solid var(--line); padding:1.1rem 0;}
+  .topbar .container{display:flex; justify-content:space-between; align-items:center;}
+  .mark{font-family:var(--mono); font-size:.68rem; letter-spacing:.2em; color:var(--brass); text-transform:uppercase;}
+  .brand{font-family:var(--display); font-style:italic; font-weight:500; font-size:1.2rem;}
+  .logout{background:none; border:1px solid var(--line); color:var(--ink); padding:.5rem 1.1rem; border-radius:100px; cursor:pointer; font-size:.85rem;}
+  .logout:hover{border-color:var(--brass);}
+
+  .stats-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1rem; margin:2rem 0;}
+  .stat{background:var(--paper-raise); border:1px solid var(--line); border-radius:16px; padding:1.3rem;}
+  .stat .num{font-family:var(--mono); font-size:1.8rem; font-weight:600;}
+  .stat .lab{font-size:.78rem; color:var(--ink-soft); margin-top:.2rem;}
+
+  h2.section{font-family:var(--display); font-weight:500; font-size:1.3rem; margin:2.2rem 0 1rem;}
+  .tabs{display:flex; gap:.5rem; margin-bottom:1.2rem; flex-wrap:wrap;}
+  .tabs button{
+    background:var(--paper-raise); border:1px solid var(--line); color:var(--ink-soft);
+    padding:.5rem 1.1rem; border-radius:100px; cursor:pointer; font-size:.84rem; font-weight:600;
+  }
+  .tabs button.active{background:var(--brass); color:#241C0F; border-color:var(--brass);}
+
+  table{width:100%; border-collapse:collapse; background:var(--paper-raise); border:1px solid var(--line); border-radius:14px; overflow:hidden;}
+  th, td{text-align:left; padding:.9rem 1rem; font-size:.86rem; border-bottom:1px solid var(--line);}
+  th{font-family:var(--mono); font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); font-weight:500;}
+  tr:last-child td{border-bottom:none;}
+  .pill{font-family:var(--mono); font-size:.68rem; padding:.25rem .7rem; border-radius:100px; text-transform:uppercase; letter-spacing:.04em;}
+  .pill.pending{background:var(--amber-tint); color:var(--amber);}
+  .pill.approved{background:var(--emerald-tint); color:var(--emerald);}
+  .pill.rejected, .pill.suspended{background:var(--red-tint); color:var(--red);}
+  .row-actions{display:flex; gap:.5rem;}
+  .row-actions button{
+    border:none; border-radius:8px; padding:.4rem .8rem; font-size:.78rem; font-weight:600; cursor:pointer;
+  }
+  .btn-approve{background:var(--emerald-tint); color:var(--emerald);}
+  .btn-reject{background:var(--red-tint); color:var(--red);}
+  .btn-suspend{background:var(--amber-tint); color:var(--amber);}
+  .empty-row td{text-align:center; color:var(--ink-soft); padding:2rem;}
+  footer{height:3rem;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="container">
+    <div><span class="mark">Admin</span><div class="brand">Dominion Home Hub</div></div>
+    <button class="logout" id="logoutBtn"><i class="fas fa-arrow-right-from-bracket"></i> Log out</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats-row" id="statsRow">
+    <div class="stat"><div class="num" id="statPending">–</div><div class="lab">Pending sellers</div></div>
+    <div class="stat"><div class="num" id="statSellers">–</div><div class="lab">Approved sellers</div></div>
+    <div class="stat"><div class="num" id="statBuyers">–</div><div class="lab">Buyers</div></div>
+    <div class="stat"><div class="num" id="statProperties">–</div><div class="lab">Live properties</div></div>
+    <div class="stat"><div class="num" id="statViews">–</div><div class="lab">Property views tracked</div></div>
+    <div class="stat"><div class="num" id="statClicks">–</div><div class="lab">"Purchase" clicks tracked</div></div>
+  </div>
+
+  <h2 class="section">Seller approval queue</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Applied</th><th>Actions</th></tr></thead>
+    <tbody id="pendingBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+  </table>
+
+  <h2 class="section">All sellers</h2>
+  <div class="tabs" id="sellerTabs">
+    <button class="active" data-filter="all">All</button>
+    <button data-filter="approved">Approved</button>
+    <button data-filter="pending">Pending</button>
+    <button data-filter="rejected">Rejected</button>
+    <button data-filter="suspended">Suspended</button>
+  </div>
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody id="sellersBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+  </table>
+
+  <h2 class="section">Properties</h2>
+  <table>
+    <thead><tr><th>Address / location</th><th>Price</th><th>Seller</th><th>Status</th></tr></thead>
+    <tbody id="propertiesBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+  </table>
+
+  <footer></footer>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import { getDatabase, ref, get, update, onValue } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+  import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAhgR45OO17vNl-xO7r2dgrRiJ7Kp1hVc4",
+    authDomain: "dominion-1e85f.firebaseapp.com",
+    databaseURL: "https://dominion-1e85f-default-rtdb.firebaseio.com",
+    projectId: "dominion-1e85f",
+    storageBucket: "dominion-1e85f.firebasestorage.app",
+    messagingSenderId: "1036601319820",
+    appId: "1:1036601319820:web:3395f663c3e05326ed76a9",
+    measurementId: "G-BZLJPTFMZ1"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const auth = getAuth(app);
+
+  let allUsers = {};
+  let sellerFilter = 'all';
+
+  function formatPrice(price) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(price || 0);
+  }
+  function formatDate(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return '—'; }
+  }
+
+  async function setSellerStatus(uid, status) {
+    await update(ref(db, `users/${uid}`), { status });
+  }
+
+  function renderPending() {
+    const pendingBody = document.getElementById('pendingBody');
+    const pending = Object.entries(allUsers).filter(([, u]) => u.role === 'seller' && u.status === 'pending');
+    document.getElementById('statPending').textContent = pending.length;
+    if (!pending.length) {
+      pendingBody.innerHTML = '<tr class="empty-row"><td colspan="4">No sellers waiting on review.</td></tr>';
+      return;
+    }
+    pendingBody.innerHTML = pending.map(([uid, u]) => `
+      <tr>
+        <td>${u.displayName || '—'}</td>
+        <td>${u.email || '—'}</td>
+        <td>${formatDate(u.createdAt)}</td>
+        <td class="row-actions">
+          <button class="btn-approve" data-uid="${uid}" data-action="approved">Approve</button>
+          <button class="btn-reject" data-uid="${uid}" data-action="rejected">Reject</button>
+        </td>
+      </tr>
+    `).join('');
+    pendingBody.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.closest('tr').style.opacity = '.5';
+        await setSellerStatus(btn.dataset.uid, btn.dataset.action);
+      });
+    });
+  }
+
+  function renderSellers() {
+    const sellersBody = document.getElementById('sellersBody');
+    let sellers = Object.entries(allUsers).filter(([, u]) => u.role === 'seller');
+    document.getElementById('statSellers').textContent = sellers.filter(([, u]) => u.status === 'approved').length;
+    document.getElementById('statBuyers').textContent = Object.values(allUsers).filter(u => u.role === 'buyer').length;
+    if (sellerFilter !== 'all') sellers = sellers.filter(([, u]) => u.status === sellerFilter);
+    if (!sellers.length) {
+      sellersBody.innerHTML = '<tr class="empty-row"><td colspan="4">No sellers in this category.</td></tr>';
+      return;
+    }
+    sellersBody.innerHTML = sellers.map(([uid, u]) => `
+      <tr>
+        <td>${u.displayName || '—'}</td>
+        <td>${u.email || '—'}</td>
+        <td><span class="pill ${u.status}">${u.status}</span></td>
+        <td class="row-actions">
+          ${u.status === 'approved' ? `<button class="btn-suspend" data-uid="${uid}" data-action="suspended">Suspend</button>` : ''}
+          ${u.status === 'suspended' || u.status === 'rejected' ? `<button class="btn-approve" data-uid="${uid}" data-action="approved">Reinstate</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+    sellersBody.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.closest('tr').style.opacity = '.5';
+        await setSellerStatus(btn.dataset.uid, btn.dataset.action);
+      });
+    });
+  }
+
+  document.getElementById('sellerTabs').addEventListener('click', (e) => {
+    if (e.target.tagName !== 'BUTTON') return;
+    document.querySelectorAll('#sellerTabs button').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    sellerFilter = e.target.dataset.filter;
+    renderSellers();
+  });
+
+  function loadUsers() {
+    onValue(ref(db, 'users'), (snap) => {
+      allUsers = snap.exists() ? snap.val() : {};
+      renderPending();
+      renderSellers();
+    });
+  }
+
+  function loadProperties() {
+    onValue(ref(db, 'properties'), (snap) => {
+      const propertiesBody = document.getElementById('propertiesBody');
+      const properties = snap.exists() ? Object.values(snap.val()) : [];
+      document.getElementById('statProperties').textContent = properties.length;
+      if (!properties.length) {
+        propertiesBody.innerHTML = '<tr class="empty-row"><td colspan="4">No properties posted yet.</td></tr>';
+        return;
+      }
+      propertiesBody.innerHTML = properties.slice(0, 50).map(p => `
+        <tr>
+          <td>${p.location || '—'}</td>
+          <td>${formatPrice(p.price)}</td>
+          <td>${p.sellerName || '—'}</td>
+          <td><span class="pill approved">${p.status || 'active'}</span></td>
+        </tr>
+      `).join('');
+    });
+  }
+
+  function loadAnalytics() {
+    onValue(ref(db, 'analyticsEvents'), (snap) => {
+      const events = snap.exists() ? Object.values(snap.val()) : [];
+      document.getElementById('statViews').textContent = events.filter(e => e.type === 'view').length;
+      document.getElementById('statClicks').textContent = events.filter(e => e.type === 'purchase_click').length;
+    }, () => {
+      document.getElementById('statViews').textContent = '0';
+      document.getElementById('statClicks').textContent = '0';
+    });
+  }
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) { window.location.href = 'admin-login.html'; return; }
+    const adminSnap = await get(ref(db, `admins/${user.uid}`));
+    if (!adminSnap.exists()) { await signOut(auth); window.location.href = 'admin-login.html'; return; }
+    loadUsers();
+    loadProperties();
+    loadAnalytics();
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await signOut(auth);
+    window.location.href = 'admin-login.html';
+  });
+</script>
+</body>
+</html>

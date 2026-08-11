@@ -96,6 +96,15 @@
     <tbody id="sellersBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
   </table>
 
+  <h2 class="section">Completed sales</h2>
+  <p style="font-size:.82rem; color:var(--ink-soft); margin-bottom:1rem; max-width:640px;">
+    Until Stripe payments are live, confirm a sale manually once money has actually changed hands outside the platform. This creates the transaction record buyers need to leave a review — it does not move any money itself.
+  </p>
+  <table>
+    <thead><tr><th>Property</th><th>Buyer</th><th>Seller</th><th>Accepted amount</th><th>Action</th></tr></thead>
+    <tbody id="salesBody"><tr class="empty-row"><td colspan="5">Loading…</td></tr></tbody>
+  </table>
+
   <h2 class="section">Properties</h2>
   <table>
     <thead><tr><th>Address / location</th><th>Price</th><th>Seller</th><th>Status</th></tr></thead>
@@ -107,7 +116,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-  import { getDatabase, ref, get, update, onValue } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+  import { getDatabase, ref, get, update, onValue, push, set } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
   const firebaseConfig = {
@@ -126,6 +135,10 @@
 
   let allUsers = {};
   let sellerFilter = 'all';
+  let allProperties = {};
+  let allOffers = {};
+  let allTransactions = {};
+  const PLATFORM_FEE_RATE = 0.05; // 5% — adjust to your actual fee
 
   function formatPrice(price) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(price || 0);
@@ -215,20 +228,69 @@
   function loadProperties() {
     onValue(ref(db, 'properties'), (snap) => {
       const propertiesBody = document.getElementById('propertiesBody');
-      const properties = snap.exists() ? Object.values(snap.val()) : [];
+      allProperties = snap.exists() ? snap.val() : {};
+      const properties = Object.values(allProperties);
       document.getElementById('statProperties').textContent = properties.length;
       if (!properties.length) {
         propertiesBody.innerHTML = '<tr class="empty-row"><td colspan="4">No properties posted yet.</td></tr>';
-        return;
+      } else {
+        propertiesBody.innerHTML = properties.slice(0, 50).map(p => `
+          <tr>
+            <td>${p.location || '—'}</td>
+            <td>${formatPrice(p.price)}</td>
+            <td>${p.sellerName || '—'}</td>
+            <td><span class="pill approved">${p.status || 'active'}</span></td>
+          </tr>
+        `).join('');
       }
-      propertiesBody.innerHTML = properties.slice(0, 50).map(p => `
+      renderSalesQueue();
+    });
+  }
+
+  function loadOffersAndTransactions() {
+    onValue(ref(db, 'offers'), (snap) => {
+      allOffers = snap.exists() ? snap.val() : {};
+      renderSalesQueue();
+    });
+    onValue(ref(db, 'transactions'), (snap) => {
+      allTransactions = snap.exists() ? snap.val() : {};
+      renderSalesQueue();
+    });
+  }
+
+  function renderSalesQueue() {
+    const salesBody = document.getElementById('salesBody');
+    const confirmedOfferIds = new Set(Object.values(allTransactions).map(t => t.offerId));
+    const pending = Object.entries(allOffers).filter(([id, o]) => o.status === 'accepted' && !confirmedOfferIds.has(id));
+    if (!pending.length) {
+      salesBody.innerHTML = '<tr class="empty-row"><td colspan="5">No accepted offers waiting on confirmation.</td></tr>';
+      return;
+    }
+    salesBody.innerHTML = pending.map(([id, o]) => {
+      const p = allProperties[o.propertyId];
+      return `
         <tr>
-          <td>${p.location || '—'}</td>
-          <td>${formatPrice(p.price)}</td>
-          <td>${p.sellerName || '—'}</td>
-          <td><span class="pill approved">${p.status || 'active'}</span></td>
+          <td>${p ? p.location : o.propertyId}</td>
+          <td>${o.buyerName || '—'}</td>
+          <td>${p ? p.sellerName : '—'}</td>
+          <td>${formatPrice(o.amount)}</td>
+          <td class="row-actions"><button class="btn-approve" data-confirm="${id}">Confirm sale</button></td>
         </tr>
-      `).join('');
+      `;
+    }).join('');
+    salesBody.querySelectorAll('[data-confirm]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const offerId = btn.dataset.confirm;
+        const o = allOffers[offerId];
+        btn.disabled = true; btn.textContent = 'Confirming…';
+        const fee = Math.round(o.amount * PLATFORM_FEE_RATE * 100) / 100;
+        const newTxRef = push(ref(db, 'transactions'));
+        await set(newTxRef, {
+          offerId, propertyId: o.propertyId, buyerId: o.buyerId, sellerId: o.sellerId,
+          amount: o.amount, platformFee: fee, sellerPayout: o.amount - fee,
+          status: 'completed', method: 'manual', createdAt: Date.now()
+        });
+      });
     });
   }
 
@@ -249,6 +311,7 @@
     if (!adminSnap.exists()) { await signOut(auth); window.location.href = 'admin-login.html'; return; }
     loadUsers();
     loadProperties();
+    loadOffersAndTransactions();
     loadAnalytics();
   });
 

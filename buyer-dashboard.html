@@ -173,6 +173,8 @@
   let currentUser = null;
   let myOffers = {};
   let myChats = {};
+  let myTransactions = {}; // keyed by offerId
+  let reviewedTransactionIds = new Set();
 
   function formatPrice(v) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0); }
 
@@ -187,6 +189,7 @@
     loadSaved();
     loadSearches();
     loadOffers();
+    loadTransactionsAndReviews();
     loadChatsUnread();
     loadRecentlyViewed();
   });
@@ -292,6 +295,21 @@
   });
 
   // ---- Offers ----
+  function loadTransactionsAndReviews() {
+    const txQuery = query(ref(db, 'transactions'), orderByChild('buyerId'), equalTo(currentUser.uid));
+    onValue(txQuery, (snap) => {
+      myTransactions = {};
+      if (snap.exists()) snap.forEach(child => { myTransactions[child.val().offerId] = { id: child.key, ...child.val() }; });
+      renderOffers();
+    });
+    const reviewQuery = query(ref(db, 'reviews'), orderByChild('buyerId'), equalTo(currentUser.uid));
+    onValue(reviewQuery, (snap) => {
+      reviewedTransactionIds = new Set();
+      if (snap.exists()) snap.forEach(child => reviewedTransactionIds.add(child.val().transactionId));
+      renderOffers();
+    });
+  }
+
   function loadOffers() {
     const q = query(ref(db, 'offers'), orderByChild('buyerId'), equalTo(currentUser.uid));
     onValue(q, (snap) => {
@@ -316,7 +334,11 @@
       const p = pSnap.exists() ? pSnap.val() : null;
       return { id, o, p };
     }));
-    list.innerHTML = rows.map(({ id, o, p }) => `
+    list.innerHTML = rows.map(({ id, o, p }) => {
+      const tx = myTransactions[id];
+      const canReview = tx && !reviewedTransactionIds.has(tx.id);
+      const alreadyReviewed = tx && reviewedTransactionIds.has(tx.id);
+      return `
       <div class="offer-row" data-id="${id}">
         <div class="offer-info">
           <div class="prop">${p ? p.location : 'Property'}</div>
@@ -324,12 +346,65 @@
         </div>
         <div class="offer-amount">${formatPrice(o.amount)}</div>
         <span class="offer-pill ${o.status}">${o.status}${o.status === 'countered' ? ' · ' + formatPrice(o.counterAmount) : ''}</span>
-        <div style="display:flex; gap:.5rem;">
+        <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
           ${o.status === 'countered' ? `<button class="btn btn-green btn-sm" data-accept-counter="${id}">Accept</button><button class="btn btn-red btn-sm" data-decline-counter="${id}">Decline</button>` : ''}
           ${p ? `<a class="btn btn-outline btn-sm" href="property-detail.html?id=${o.propertyId}">View</a>` : ''}
+          ${canReview ? `<button class="btn btn-primary btn-sm" data-review="${id}" data-tx="${tx.id}" data-seller="${o.sellerId}" data-prop="${o.propertyId}">Leave a review</button>` : ''}
+          ${alreadyReviewed ? `<span style="font-size:.78rem; color:var(--ink-soft);">✓ Reviewed</span>` : ''}
         </div>
       </div>
-    `).join('');
+      ${canReview ? `
+      <div class="review-form" id="reviewForm-${id}" style="display:none; background:var(--paper-raise); border:1px solid var(--line); border-radius:12px; padding:1rem 1.2rem; margin:-.5rem 0 .9rem;">
+        <div style="display:flex; gap:.3rem; margin-bottom:.7rem;" class="star-picker" data-for="${id}">
+          ${[1,2,3,4,5].map(n => `<i class="far fa-star" data-star="${n}" style="cursor:pointer; color:var(--brass); font-size:1.1rem;"></i>`).join('')}
+        </div>
+        <textarea id="reviewText-${id}" rows="2" placeholder="How was the experience?" style="width:100%; padding:.6rem .8rem; border:1.5px solid var(--line); border-radius:10px; font-family:var(--body); margin-bottom:.7rem;"></textarea>
+        <button class="btn btn-primary btn-sm" data-submit-review="${id}">Submit review</button>
+      </div>` : ''}
+    `;
+    }).join('');
+
+    list.querySelectorAll('[data-review]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const formEl = document.getElementById(`reviewForm-${btn.dataset.review}`);
+        formEl.style.display = formEl.style.display === 'none' ? 'block' : 'none';
+      });
+    });
+    let selectedRatings = {};
+    list.querySelectorAll('.star-picker').forEach(picker => {
+      const id = picker.dataset.for;
+      picker.querySelectorAll('[data-star]').forEach(star => {
+        star.addEventListener('click', () => {
+          const val = parseInt(star.dataset.star);
+          selectedRatings[id] = val;
+          picker.querySelectorAll('[data-star]').forEach(s => {
+            const on = parseInt(s.dataset.star) <= val;
+            s.className = on ? 'fas fa-star' : 'far fa-star';
+          });
+        });
+      });
+    });
+    list.querySelectorAll('[data-submit-review]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.submitReview;
+        const parent = btn.closest('[data-review], .review-form') || btn.closest('div');
+        const reviewBtn = list.querySelector(`[data-review="${id}"]`);
+        const rating = selectedRatings[id] || 5;
+        const text = document.getElementById(`reviewText-${id}`).value.trim();
+        const tx = myTransactions[id];
+        const newRef = push(ref(db, 'reviews'));
+        btn.disabled = true; btn.textContent = 'Submitting…';
+        try {
+          await set(newRef, {
+            transactionId: tx.id, propertyId: reviewBtn.dataset.prop, sellerId: reviewBtn.dataset.seller,
+            buyerId: currentUser.uid, rating, text, createdAt: Date.now()
+          });
+        } catch (err) {
+          alert(err.message.replace('Firebase: ', ''));
+          btn.disabled = false; btn.textContent = 'Submit review';
+        }
+      });
+    });
 
     list.querySelectorAll('[data-accept-counter]').forEach(btn => {
       btn.addEventListener('click', async () => {

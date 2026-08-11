@@ -63,6 +63,7 @@
     const password = document.getElementById('password').value;
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
+      await cred.user.getIdToken(true);
       const adminSnap = await get(ref(db, `admins/${cred.user.uid}`));
       if (adminSnap.exists()) {
         window.location.href = 'admin-dashboard.html';

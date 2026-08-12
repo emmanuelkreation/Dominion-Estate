@@ -16,7 +16,7 @@
     --display:'Fraunces',serif; --body:'Inter',sans-serif; --mono:'IBM Plex Mono',monospace;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
-  html,body{height:100%;}
+  html,body{height:100%; height:100dvh;}
   body{font-family:var(--body); background:var(--paper); color:var(--ink); display:flex; flex-direction:column;}
   a{color:inherit; text-decoration:none;}
 
@@ -84,7 +84,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
-    getDatabase, ref, get, set, push, onValue, onChildAdded, query, orderByChild, equalTo, update, off
+    getDatabase, ref, get, set, push, onValue, query, orderByChild, equalTo, update, off
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
@@ -200,7 +200,6 @@
   async function openChat(chatId) {
     const chat = allChats[chatId];
     if (!chat) return;
-    console.log('[chat] openChat called for chatId=', chatId, 'record=', chat);
     // Guard set FIRST, before any async work — the update() call two lines
     // down triggers the sidebar's live listeners to fire again immediately,
     // and without the guard being in place before that happens, a second
@@ -248,50 +247,47 @@
       showSidebarMobile();
     });
 
-    // Same pattern as the property-chat page: load existing messages once
-    // with get(), render them, then attach onChildAdded so every message
-    // sent from here on — by either side — appends its own bubble as soon
-    // as it's written, instead of waiting on a full-list onValue refresh.
-    function displayMessage(m) {
+    // On mobile, opening the on-screen keyboard shrinks the visual viewport
+    // without the page reflowing on its own, which can leave the composer
+    // pushed out of view below the keyboard. Nudge it back into view and
+    // keep the thread scrolled to the latest message whenever that happens.
+    const messageInputEl = document.getElementById('messageInput');
+    messageInputEl.addEventListener('focus', () => {
+      setTimeout(() => {
+        messageInputEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        const list = document.getElementById('messagesList');
+        if (list) list.scrollTop = list.scrollHeight;
+      }, 300);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => {
+        const list = document.getElementById('messagesList');
+        if (list) list.scrollTop = list.scrollHeight;
+      });
+    }
+
+    // Same idea as before, but simplified: a single onValue listener always
+    // gives us the full, authoritative message list on open AND on every
+    // subsequent change (send, receive) — no separate initial-fetch /
+    // dedup-by-key logic that can drift out of sync across two snapshots.
+    onValue(ref(db, `messages/${chatId}`), (snap) => {
       const list = document.getElementById('messagesList');
       if (!list) return;
-      const placeholder = list.querySelector('.no-msgs-placeholder');
-      if (placeholder) placeholder.remove();
-      list.insertAdjacentHTML('beforeend', `
+      if (!snap.exists()) {
+        list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
+        return;
+      }
+      const msgs = [];
+      snap.forEach(child => msgs.push(child.val()));
+      msgs.sort((a, b) => a.timestamp - b.timestamp);
+      list.innerHTML = msgs.map(m => `
         <div class="bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}">
           ${escapeHtml(m.text)}
           <span class="time">${formatTime(m.timestamp)}</span>
         </div>
-      `);
+      `).join('');
       list.scrollTop = list.scrollHeight;
-    }
-
-    const messagesRef = ref(db, `messages/${chatId}`);
-    const list = document.getElementById('messagesList');
-    try {
-      const initialSnap = await get(messagesRef);
-      console.log(`[chat] initial load for chatId=${chatId}: exists=${initialSnap.exists()}, childCount=${initialSnap.exists() ? initialSnap.size : 0}`);
-      if (initialSnap.exists()) {
-        const msgs = [];
-        initialSnap.forEach(child => msgs.push(child.val()));
-        msgs.sort((a, b) => a.timestamp - b.timestamp);
-        list.innerHTML = '';
-        msgs.forEach(displayMessage);
-      } else {
-        list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
-      }
-      onChildAdded(messagesRef, (snap) => {
-        // The initial batch above already rendered everything that existed
-        // at load time; onChildAdded fires for those too on attach, so only
-        // messages newer than the initial load should be appended here.
-        const m = snap.val();
-        if (initialSnap.exists() && initialSnap.hasChild(snap.key)) return;
-        displayMessage(m);
-      });
-    } catch (err) {
-      console.error(`[chat] failed to load message history for chatId=${chatId}:`, err);
-      list.innerHTML = `<div style="color:#b91c1c; font-size:.85rem; padding:1rem;">Couldn't load message history: ${err.message}</div>`;
-    }
+    });
 
     document.getElementById('composerForm').addEventListener('submit', async (e) => {
       e.preventDefault();

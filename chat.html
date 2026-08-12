@@ -84,7 +84,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
-    getDatabase, ref, get, set, push, onValue, query, orderByChild, equalTo, update, off
+    getDatabase, ref, get, set, push, onValue, onChildAdded, query, orderByChild, equalTo, update, off
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
@@ -266,27 +266,28 @@
       });
     }
 
-    // Same idea as before, but simplified: a single onValue listener always
-    // gives us the full, authoritative message list on open AND on every
-    // subsequent change (send, receive) — no separate initial-fetch /
-    // dedup-by-key logic that can drift out of sync across two snapshots.
-    onValue(ref(db, `messages/${chatId}`), (snap) => {
-      const list = document.getElementById('messagesList');
-      if (!list) return;
-      if (!snap.exists()) {
-        list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
-        return;
-      }
-      const msgs = [];
-      snap.forEach(child => msgs.push(child.val()));
-      msgs.sort((a, b) => a.timestamp - b.timestamp);
-      list.innerHTML = msgs.map(m => `
+    // onChildAdded alone (no separate get() call) handles both cases:
+    // Firebase fires it once for every message that already exists the
+    // moment this listener attaches, then again for every new message
+    // after that — so there's no dual-snapshot dedup logic to drift out of
+    // sync, and no reliance on a plain onValue listener (which behaved
+    // unreliably here, likely a rules quirk specific to persistent 'value'
+    // subscriptions vs. one-time reads).
+    const list = document.getElementById('messagesList');
+    list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
+    onChildAdded(ref(db, `messages/${chatId}`), (snap) => {
+      const m = snap.val();
+      const currentList = document.getElementById('messagesList');
+      if (!currentList) return;
+      const placeholder = currentList.querySelector('.no-msgs-placeholder');
+      if (placeholder) placeholder.remove();
+      currentList.insertAdjacentHTML('beforeend', `
         <div class="bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}">
           ${escapeHtml(m.text)}
           <span class="time">${formatTime(m.timestamp)}</span>
         </div>
-      `).join('');
-      list.scrollTop = list.scrollHeight;
+      `);
+      currentList.scrollTop = currentList.scrollHeight;
     });
 
     document.getElementById('composerForm').addEventListener('submit', async (e) => {

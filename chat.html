@@ -76,7 +76,7 @@
     <h2>Conversations</h2>
     <div id="convoList"><div class="empty-sidebar">Loading…</div></div>
   </aside>
-  <main class="thread hide-mobile" id="thread">
+  <main class="thread" id="thread">
     <div class="no-thread" id="noThread">Select a conversation, or start one from a property page.</div>
   </main>
 </div>
@@ -115,18 +115,6 @@
   function formatTime(ts) {
     if (!ts) return '';
     return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  }
-
-  // Mobile view toggling: only one of #sidebar / #thread is visible at a
-  // time below the 760px breakpoint. These are no-ops on desktop since the
-  // hide-mobile class only has an effect inside that media query.
-  function showThreadMobile() {
-    document.getElementById('sidebar').classList.add('hide-mobile');
-    document.getElementById('thread').classList.remove('hide-mobile');
-  }
-  function showSidebarMobile() {
-    document.getElementById('sidebar').classList.remove('hide-mobile');
-    document.getElementById('thread').classList.add('hide-mobile');
   }
 
   onAuthStateChanged(auth, async (user) => {
@@ -204,7 +192,7 @@
     if (messagesListenerChatId && messagesListenerChatId !== chatId) {
       off(ref(db, `messages/${messagesListenerChatId}`));
     }
-    if (messagesListenerChatId === chatId) { showThreadMobile(); return; } // already open or opening — ignore the retrigger
+    if (messagesListenerChatId === chatId) return; // already open or opening — ignore the retrigger
     messagesListenerChatId = chatId;
 
     currentRole = chat.buyerId === currentUser.uid ? 'buyer' : 'seller';
@@ -219,7 +207,7 @@
     const thread = document.getElementById('thread');
     thread.innerHTML = `
       <div class="thread-header">
-        <a href="#" class="mobile-back" id="mobileBackBtn"><i class="fas fa-arrow-left"></i></a>
+        <a href="chat.html" class="mobile-back"><i class="fas fa-arrow-left"></i></a>
         ${prop && prop.images && prop.images[0] ? `<img src="${prop.images[0]}">` : '<div class="ph"></div>'}
         <div>
           <div class="prop-price">${prop ? formatPrice(prop.price) : otherName}</div>
@@ -233,30 +221,33 @@
       </form>
     `;
 
-    // Show the thread panel (and hide the sidebar) on mobile now that the
-    // thread DOM actually exists. On desktop this class has no visual
-    // effect, so it's safe to call unconditionally.
-    showThreadMobile();
+    const renderedMessageIds = new Set(); // avoids double-rendering a message that was already shown optimistically
 
-    document.getElementById('mobileBackBtn').addEventListener('click', (e) => {
-      e.preventDefault();
-      showSidebarMobile();
-    });
+    function renderMessage(id, m, list) {
+      if (renderedMessageIds.has(id)) return;
+      renderedMessageIds.add(id);
+      const empty = list.querySelector('.messages-empty');
+      if (empty) empty.remove();
+      const bubble = document.createElement('div');
+      bubble.className = `bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}`;
+      bubble.innerHTML = `${m.text}<span class="time">${formatTime(m.timestamp)}</span>`;
+      list.appendChild(bubble);
+      list.scrollTop = list.scrollHeight;
+    }
 
     onValue(ref(db, `messages/${chatId}`), (snap) => {
       const list = document.getElementById('messagesList');
       if (!list) return;
-      if (!snap.exists()) { list.innerHTML = '<div style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>'; return; }
+      if (!snap.exists()) {
+        if (!renderedMessageIds.size) list.innerHTML = '<div class="messages-empty" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
+        return;
+      }
       const msgs = [];
-      snap.forEach(child => msgs.push(child.val()));
-      msgs.sort((a, b) => a.timestamp - b.timestamp);
-      list.innerHTML = msgs.map(m => `
-        <div class="bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}">
-          ${m.text}
-          <span class="time">${formatTime(m.timestamp)}</span>
-        </div>
-      `).join('');
-      list.scrollTop = list.scrollHeight;
+      snap.forEach(child => msgs.push([child.key, child.val()]));
+      msgs.sort((a, b) => a[1].timestamp - b[1].timestamp);
+      msgs.forEach(([id, m]) => renderMessage(id, m, list));
+    }, (err) => {
+      console.error('[Dominion] messages read error:', err);
     });
 
     document.getElementById('composerForm').addEventListener('submit', async (e) => {
@@ -265,33 +256,25 @@
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
+      const newRef = push(ref(db, `messages/${chatId}`));
+      const messageData = { senderId: currentUser.uid, text, timestamp: Date.now() };
 
-      // Optimistic render: show the bubble immediately so the sender always
-      // sees their own message land, even if the live `messages/{chatId}`
-      // listener is slow, blocked by rules, or the write itself fails —
-      // in which case the console error / alert below will tell us why.
+      // Render immediately, before the write even confirms — the listener
+      // above will just skip it (via renderedMessageIds) when it syncs back,
+      // so this doesn't depend on the round-trip to actually show your own
+      // message, only on whether the write itself succeeds.
       const list = document.getElementById('messagesList');
-      if (list) {
-        if (!list.querySelector('.bubble')) list.innerHTML = '';
-        list.insertAdjacentHTML('beforeend', `
-          <div class="bubble mine">
-            ${text}
-            <span class="time">${formatTime(Date.now())}</span>
-          </div>
-        `);
-        list.scrollTop = list.scrollHeight;
-      }
+      if (list) renderMessage(newRef.key, messageData, list);
 
       try {
-        const newRef = push(ref(db, `messages/${chatId}`));
-        await set(newRef, { senderId: currentUser.uid, text, timestamp: Date.now() });
+        await set(newRef, messageData);
         await update(ref(db, `chats/${chatId}`), {
           lastMessage: text, lastUpdated: Date.now(),
           [currentRole === 'buyer' ? 'sellerHasUnread' : 'buyerHasUnread']: true
         });
       } catch (err) {
-        console.error('Failed to send message:', err);
-        alert('Your message could not be saved: ' + err.message + '\n\nThis usually means a Firebase Realtime Database rule is blocking writes to the "messages" node.');
+        alert(`Message failed to send: ${err.message || err.code || 'unknown error'}`);
+        console.error('[Dominion] message send error:', err);
       }
     });
   }

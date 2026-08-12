@@ -183,6 +183,17 @@
   async function openChat(chatId) {
     const chat = allChats[chatId];
     if (!chat) return;
+    // Guard set FIRST, before any async work — the update() call two lines
+    // down triggers the sidebar's live listeners to fire again immediately,
+    // and without the guard being in place before that happens, a second
+    // concurrent openChat() for the same chat can start before this one
+    // finishes, racing it for the message listener and the send handler.
+    if (messagesListenerChatId && messagesListenerChatId !== chatId) {
+      off(ref(db, `messages/${messagesListenerChatId}`));
+    }
+    if (messagesListenerChatId === chatId) return; // already open or opening — ignore the retrigger
+    messagesListenerChatId = chatId;
+
     currentRole = chat.buyerId === currentUser.uid ? 'buyer' : 'seller';
 
     // Mark read on my side
@@ -209,10 +220,6 @@
       </form>
     `;
 
-    if (messagesListenerChatId && messagesListenerChatId !== chatId) {
-      off(ref(db, `messages/${messagesListenerChatId}`));
-    }
-    messagesListenerChatId = chatId;
     onValue(ref(db, `messages/${chatId}`), (snap) => {
       const list = document.getElementById('messagesList');
       if (!list) return;

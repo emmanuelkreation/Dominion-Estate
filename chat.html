@@ -1,4 +1,4 @@
-<!-- CHAT_BUILD_VERSION: 6 -->
+<!-- CHAT_BUILD_VERSION: 5 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -136,7 +136,6 @@
   onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'login.html'; return; }
     currentUser = user;
-    await user.getIdToken(true); // force-refresh so the DB connection has a valid token before the first read on a fresh page load
     const uSnap = await get(ref(db, `users/${user.uid}`));
     const u = uSnap.exists() ? uSnap.val() : {};
     document.getElementById('dashboardLink').href = u.role === 'seller'
@@ -201,6 +200,7 @@
   async function openChat(chatId) {
     const chat = allChats[chatId];
     if (!chat) return;
+    console.log('[chat] openChat called for chatId=', chatId, 'record=', chat);
     // Guard set FIRST, before any async work — the update() call two lines
     // down triggers the sidebar's live listeners to fire again immediately,
     // and without the guard being in place before that happens, a second
@@ -248,10 +248,10 @@
       showSidebarMobile();
     });
 
-    // Load existing messages once with get(), render them, then attach
-    // onChildAdded so every message sent from here on — by either side —
-    // appends its own bubble as soon as it's written, instead of waiting
-    // on a full-list onValue refresh.
+    // Same pattern as the property-chat page: load existing messages once
+    // with get(), render them, then attach onChildAdded so every message
+    // sent from here on — by either side — appends its own bubble as soon
+    // as it's written, instead of waiting on a full-list onValue refresh.
     function displayMessage(m) {
       const list = document.getElementById('messagesList');
       if (!list) return;
@@ -268,31 +268,30 @@
 
     const messagesRef = ref(db, `messages/${chatId}`);
     const list = document.getElementById('messagesList');
-    let initialSnap;
     try {
-      initialSnap = await get(messagesRef);
+      const initialSnap = await get(messagesRef);
+      console.log(`[chat] initial load for chatId=${chatId}: exists=${initialSnap.exists()}, childCount=${initialSnap.exists() ? initialSnap.size : 0}`);
+      if (initialSnap.exists()) {
+        const msgs = [];
+        initialSnap.forEach(child => msgs.push(child.val()));
+        msgs.sort((a, b) => a.timestamp - b.timestamp);
+        list.innerHTML = '';
+        msgs.forEach(displayMessage);
+      } else {
+        list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
+      }
+      onChildAdded(messagesRef, (snap) => {
+        // The initial batch above already rendered everything that existed
+        // at load time; onChildAdded fires for those too on attach, so only
+        // messages newer than the initial load should be appended here.
+        const m = snap.val();
+        if (initialSnap.exists() && initialSnap.hasChild(snap.key)) return;
+        displayMessage(m);
+      });
     } catch (err) {
-      console.error('[Dominion] Failed to load message history:', err);
-      list.innerHTML = `<div style="color:var(--red, #B3413A); font-size:.85rem;">Couldn't load message history (${err.message || err.code || 'unknown error'}). Try refreshing again.</div>`;
-      return;
+      console.error(`[chat] failed to load message history for chatId=${chatId}:`, err);
+      list.innerHTML = `<div style="color:#b91c1c; font-size:.85rem; padding:1rem;">Couldn't load message history: ${err.message}</div>`;
     }
-    if (initialSnap.exists()) {
-      const msgs = [];
-      initialSnap.forEach(child => msgs.push(child.val()));
-      msgs.sort((a, b) => a.timestamp - b.timestamp);
-      list.innerHTML = '';
-      msgs.forEach(displayMessage);
-    } else {
-      list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
-    }
-    onChildAdded(messagesRef, (snap) => {
-      // The initial batch above already rendered everything that existed
-      // at load time; onChildAdded fires for those too on attach, so only
-      // messages newer than the initial load should be appended here.
-      const m = snap.val();
-      if (initialSnap.exists() && initialSnap.hasChild(snap.key)) return;
-      displayMessage(m);
-    });
 
     document.getElementById('composerForm').addEventListener('submit', async (e) => {
       e.preventDefault();

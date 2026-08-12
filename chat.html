@@ -76,7 +76,7 @@
     <h2>Conversations</h2>
     <div id="convoList"><div class="empty-sidebar">Loading…</div></div>
   </aside>
-  <main class="thread" id="thread">
+  <main class="thread hide-mobile" id="thread">
     <div class="no-thread" id="noThread">Select a conversation, or start one from a property page.</div>
   </main>
 </div>
@@ -84,7 +84,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
-    getDatabase, ref, get, set, push, onValue, query, orderByChild, equalTo, update, off
+    getDatabase, ref, get, set, push, onValue, onChildAdded, query, orderByChild, equalTo, update, off
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
@@ -115,6 +115,22 @@
   function formatTime(ts) {
     if (!ts) return '';
     return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, m => m === '&' ? '&amp;' : (m === '<' ? '&lt;' : '&gt;'));
+  }
+
+  // Mobile view toggling: only one of #sidebar / #thread is visible at a
+  // time below the 760px breakpoint. These are no-ops on desktop since the
+  // hide-mobile class only has an effect inside that media query.
+  function showThreadMobile() {
+    document.getElementById('sidebar').classList.add('hide-mobile');
+    document.getElementById('thread').classList.remove('hide-mobile');
+  }
+  function showSidebarMobile() {
+    document.getElementById('sidebar').classList.remove('hide-mobile');
+    document.getElementById('thread').classList.add('hide-mobile');
   }
 
   onAuthStateChanged(auth, async (user) => {
@@ -192,7 +208,7 @@
     if (messagesListenerChatId && messagesListenerChatId !== chatId) {
       off(ref(db, `messages/${messagesListenerChatId}`));
     }
-    if (messagesListenerChatId === chatId) return; // already open or opening — ignore the retrigger
+    if (messagesListenerChatId === chatId) { showThreadMobile(); return; } // already open or opening — ignore the retrigger
     messagesListenerChatId = chatId;
 
     currentRole = chat.buyerId === currentUser.uid ? 'buyer' : 'seller';
@@ -207,7 +223,7 @@
     const thread = document.getElementById('thread');
     thread.innerHTML = `
       <div class="thread-header">
-        <a href="chat.html" class="mobile-back"><i class="fas fa-arrow-left"></i></a>
+        <a href="#" class="mobile-back" id="mobileBackBtn"><i class="fas fa-arrow-left"></i></a>
         ${prop && prop.images && prop.images[0] ? `<img src="${prop.images[0]}">` : '<div class="ph"></div>'}
         <div>
           <div class="prop-price">${prop ? formatPrice(prop.price) : otherName}</div>
@@ -221,33 +237,53 @@
       </form>
     `;
 
-    const renderedMessageIds = new Set(); // avoids double-rendering a message that was already shown optimistically
+    // Show the thread panel (and hide the sidebar) on mobile now that the
+    // thread DOM actually exists. On desktop this class has no visual
+    // effect, so it's safe to call unconditionally.
+    showThreadMobile();
 
-    function renderMessage(id, m, list) {
-      if (renderedMessageIds.has(id)) return;
-      renderedMessageIds.add(id);
-      const empty = list.querySelector('.messages-empty');
-      if (empty) empty.remove();
-      const bubble = document.createElement('div');
-      bubble.className = `bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}`;
-      bubble.innerHTML = `${m.text}<span class="time">${formatTime(m.timestamp)}</span>`;
-      list.appendChild(bubble);
+    document.getElementById('mobileBackBtn').addEventListener('click', (e) => {
+      e.preventDefault();
+      showSidebarMobile();
+    });
+
+    // Same pattern as the property-chat page: load existing messages once
+    // with get(), render them, then attach onChildAdded so every message
+    // sent from here on — by either side — appends its own bubble as soon
+    // as it's written, instead of waiting on a full-list onValue refresh.
+    function displayMessage(m) {
+      const list = document.getElementById('messagesList');
+      if (!list) return;
+      const placeholder = list.querySelector('.no-msgs-placeholder');
+      if (placeholder) placeholder.remove();
+      list.insertAdjacentHTML('beforeend', `
+        <div class="bubble ${m.senderId === currentUser.uid ? 'mine' : 'theirs'}">
+          ${escapeHtml(m.text)}
+          <span class="time">${formatTime(m.timestamp)}</span>
+        </div>
+      `);
       list.scrollTop = list.scrollHeight;
     }
 
-    onValue(ref(db, `messages/${chatId}`), (snap) => {
-      const list = document.getElementById('messagesList');
-      if (!list) return;
-      if (!snap.exists()) {
-        if (!renderedMessageIds.size) list.innerHTML = '<div class="messages-empty" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
-        return;
-      }
+    const messagesRef = ref(db, `messages/${chatId}`);
+    const initialSnap = await get(messagesRef);
+    const list = document.getElementById('messagesList');
+    if (initialSnap.exists()) {
       const msgs = [];
-      snap.forEach(child => msgs.push([child.key, child.val()]));
-      msgs.sort((a, b) => a[1].timestamp - b[1].timestamp);
-      msgs.forEach(([id, m]) => renderMessage(id, m, list));
-    }, (err) => {
-      console.error('[Dominion] messages read error:', err);
+      initialSnap.forEach(child => msgs.push(child.val()));
+      msgs.sort((a, b) => a.timestamp - b.timestamp);
+      list.innerHTML = '';
+      msgs.forEach(displayMessage);
+    } else {
+      list.innerHTML = '<div class="no-msgs-placeholder" style="color:var(--ink-soft); font-size:.85rem;">No messages yet — say hello.</div>';
+    }
+    onChildAdded(messagesRef, (snap) => {
+      // The initial batch above already rendered everything that existed
+      // at load time; onChildAdded fires for those too on attach, so only
+      // messages newer than the initial load should be appended here.
+      const m = snap.val();
+      if (initialSnap.exists() && initialSnap.hasChild(snap.key)) return;
+      displayMessage(m);
     });
 
     document.getElementById('composerForm').addEventListener('submit', async (e) => {
@@ -256,25 +292,17 @@
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      const newRef = push(ref(db, `messages/${chatId}`));
-      const messageData = { senderId: currentUser.uid, text, timestamp: Date.now() };
-
-      // Render immediately, before the write even confirms — the listener
-      // above will just skip it (via renderedMessageIds) when it syncs back,
-      // so this doesn't depend on the round-trip to actually show your own
-      // message, only on whether the write itself succeeds.
-      const list = document.getElementById('messagesList');
-      if (list) renderMessage(newRef.key, messageData, list);
 
       try {
-        await set(newRef, messageData);
+        const newRef = push(ref(db, `messages/${chatId}`));
+        await set(newRef, { senderId: currentUser.uid, text, timestamp: Date.now() });
         await update(ref(db, `chats/${chatId}`), {
           lastMessage: text, lastUpdated: Date.now(),
           [currentRole === 'buyer' ? 'sellerHasUnread' : 'buyerHasUnread']: true
         });
       } catch (err) {
-        alert(`Message failed to send: ${err.message || err.code || 'unknown error'}`);
-        console.error('[Dominion] message send error:', err);
+        console.error('Failed to send message:', err);
+        alert('Your message could not be saved: ' + err.message + '\n\nThis usually means a Firebase Realtime Database rule is blocking writes to the "messages" node.');
       }
     });
   }

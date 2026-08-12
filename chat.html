@@ -139,7 +139,14 @@
       snap.forEach(child => { allChats[child.key] = { id: child.key, ...child.val() }; });
     }
     renderSidebar();
-    if (activeChatId && allChats[activeChatId]) openChat(activeChatId);
+    // Only auto-open on the FIRST time this chat becomes available (e.g. a
+    // ?chatId= link on initial load). Once it's already the open thread,
+    // re-opening on every chats-node change (which includes sending a
+    // message itself) tears down and rebuilds the panel mid-send, racing
+    // against the message that was just sent.
+    if (activeChatId && allChats[activeChatId] && messagesListenerChatId !== activeChatId) {
+      openChat(activeChatId);
+    }
   }
 
   function renderSidebar() {

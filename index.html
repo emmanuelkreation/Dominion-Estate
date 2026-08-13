@@ -982,6 +982,11 @@
     return 'For Lease';
   }
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
   function renderPropertyCards(properties, container) {
     if (!properties.length) {
       container.innerHTML = '<div style="text-align:center; grid-column:1/-1;">No properties found.</div>';
@@ -989,25 +994,25 @@
     }
     let html = '';
     properties.forEach(prop => {
-      const imageUrl = prop.images?.[0] || 'https://via.placeholder.com/600x400?text=Dominion+Home';
+      const imageUrl = escapeHtml(prop.images?.[0] || 'https://via.placeholder.com/600x400?text=Dominion+Home');
       const listingLabel = getListingLabel(prop.listingType);
       const typeClass = prop.listingType === 'rent' ? 'rent' : (prop.listingType === 'lease' ? 'lease' : '');
       html += `
-        <div class="property-card" data-id="${prop.id}">
+        <div class="property-card" data-id="${escapeHtml(prop.id)}">
           <div class="card-img" style="background-image: url('${imageUrl}');"></div>
           <div class="card-content">
             <div class="price">${formatPrice(prop.price)} <span class="listing-type-badge ${typeClass}">${listingLabel}</span></div>
-            <div class="address"><i class="fas fa-map-marker-alt"></i> ${prop.location}</div>
+            <div class="address"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(prop.location)}</div>
             <div class="features">
-              <span><i class="fas fa-bed"></i> ${prop.bedrooms} beds</span>
-              <span><i class="fas fa-bath"></i> ${prop.bathrooms} baths</span>
-              <span><i class="fas fa-ruler-combined"></i> ${prop.area || 0} sqft</span>
+              <span><i class="fas fa-bed"></i> ${escapeHtml(prop.bedrooms)} beds</span>
+              <span><i class="fas fa-bath"></i> ${escapeHtml(prop.bathrooms)} baths</span>
+              <span><i class="fas fa-ruler-combined"></i> ${escapeHtml(prop.area || 0)} sqft</span>
             </div>
             <div class="seller-name">
               <i class="fas fa-user-circle"></i>
-              <a href="seller-profile.html?sellerId=${prop.sellerId}">${prop.sellerName || 'Property Owner'}</a>
+              <a href="seller-profile.html?sellerId=${escapeHtml(prop.sellerId)}">${escapeHtml(prop.sellerName || 'Property Owner')}</a>
             </div>
-            <span class="badge">${prop.propertyType || 'Property'}</span>
+            <span class="badge">${escapeHtml(prop.propertyType || 'Property')}</span>
           </div>
         </div>
       `;

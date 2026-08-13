@@ -98,7 +98,7 @@
   .empty{color:var(--ink-soft); font-size:.9rem; padding:2rem 0; text-align:center;}
 
   /* Profile */
-  .profile-card{background:var(--paper-raise); border:1px solid var(--line); border-radius:18px; padding:1.8rem; max-width:520px;}
+  .profile-card{background:var(--paper-raise); border:1px solid var(--line); border-radius:18px; padding:1.8rem; max-width:600px;}
   .msg{font-size:.83rem; padding:.6rem .9rem; border-radius:8px; margin-top:1rem; display:none;}
   .msg.info{background:var(--emerald-tint); color:var(--emerald-deep); display:block;}
   .msg.error{background:var(--red-tint); color:var(--red); display:block;}
@@ -192,9 +192,13 @@
     <div class="section-head"><h2>Profile & brand</h2></div>
     <div class="profile-card">
       <div class="field"><label>Brand / display name</label><input type="text" id="pName"></div>
+      <div class="field"><label>Logo image URL</label><input type="text" id="pLogo" placeholder="https://…"><div class="hint">Shown as your avatar on your public profile. Leave blank to use your initial instead.</div></div>
+      <div class="field"><label>Cover / background image URL</label><input type="text" id="pCover" placeholder="https://…"><div class="hint">The banner image behind your profile header.</div></div>
+      <div class="field"><label>About us</label><textarea id="pAbout" rows="4" placeholder="Tell buyers who you are, what you specialize in, how long you've been doing this…"></textarea></div>
       <div class="field"><label>Business address</label><input type="text" id="pAddress" placeholder="Street, city, state"></div>
       <div class="field"><label>Email</label><input type="email" id="pEmail" disabled></div>
       <button class="btn btn-primary" id="saveProfileBtn">Save changes</button>
+      <a href="#" class="btn btn-outline" id="viewProfileLink" target="_blank" style="margin-left:.6rem;">View public profile</a>
       <div class="msg" id="profileMsg"></div>
     </div>
   </section>
@@ -241,8 +245,12 @@
     currentUser = user;
     document.getElementById('brandPill').textContent = u.displayName || user.email;
     document.getElementById('pName').value = u.displayName || '';
+    document.getElementById('pLogo').value = u.logoUrl || '';
+    document.getElementById('pCover').value = u.coverImageUrl || '';
+    document.getElementById('pAbout').value = u.aboutUs || '';
     document.getElementById('pAddress').value = u.businessAddress || '';
     document.getElementById('pEmail').value = u.email || '';
+    document.getElementById('viewProfileLink').href = `seller-profile.html?sellerId=${user.uid}`;
     loadListings();
     loadOffers();
     loadEvents();
@@ -491,6 +499,9 @@
     try {
       await update(ref(db, `users/${currentUser.uid}`), {
         displayName: document.getElementById('pName').value.trim(),
+        logoUrl: document.getElementById('pLogo').value.trim(),
+        coverImageUrl: document.getElementById('pCover').value.trim(),
+        aboutUs: document.getElementById('pAbout').value.trim(),
         businessAddress: document.getElementById('pAddress').value.trim()
       });
       document.getElementById('brandPill').textContent = document.getElementById('pName').value.trim();

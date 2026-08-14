@@ -461,7 +461,11 @@
     const snap = await get(q);
     let existingId = null;
     if (snap.exists()) {
-      snap.forEach(child => { if (child.val().propertyId === propertyId && child.val().sellerId === property.sellerId) existingId = child.key; });
+      // Match on buyerId + sellerId only — not propertyId — so a buyer who
+      // previously messaged this seller from a different property (or from
+      // their profile page directly) lands back in that same conversation
+      // instead of starting a new one.
+      snap.forEach(child => { if (child.val().sellerId === property.sellerId) existingId = child.key; });
     }
     if (existingId) { window.location.href = `chat.html?chatId=${existingId}`; return; }
     const newRef = push(ref(db, 'chats'));
@@ -474,5 +478,6 @@
     window.location.href = `chat.html?chatId=${newRef.key}`;
   });
 </script>
+
 </body>
 </html>

@@ -201,6 +201,30 @@
       <a href="#" class="btn btn-outline" id="viewProfileLink" target="_blank" style="margin-left:.6rem;">View public profile</a>
       <div class="msg" id="profileMsg"></div>
     </div>
+
+    <div class="profile-card" id="payoutCard" style="margin-top:1.6rem;">
+      <div class="section-head" style="margin-bottom:1rem;"><h2 style="font-size:1.1rem;">Payout account</h2></div>
+
+      <div id="payoutConnected" style="display:none;">
+        <div class="msg info" style="display:block;">
+          Payouts connected — <span id="payoutAccountName"></span>, account ending in <span id="payoutLast4"></span>.
+        </div>
+        <button class="btn btn-outline btn-sm" id="reconnectPayoutBtn" style="margin-top:.8rem;">Change bank account</button>
+      </div>
+
+      <div id="payoutSetupForm">
+        <div class="field"><label>Bank</label>
+          <select id="payoutBank"><option value="">Loading banks…</option></select>
+        </div>
+        <div class="field"><label>Account number</label><input type="text" id="payoutAccountNumber" placeholder="0123456789" maxlength="10"></div>
+        <button type="button" class="btn btn-outline" id="verifyAccountBtn">Verify account</button>
+        <div id="verifiedNameRow" style="display:none; margin:.9rem 0;">
+          <div class="field"><label>Confirm this is you</label><input type="text" id="verifiedAccountName" disabled></div>
+          <button type="button" class="btn btn-primary" id="confirmPayoutBtn">Save payout account</button>
+        </div>
+        <div class="msg" id="payoutMsg"></div>
+      </div>
+    </div>
   </section>
 
   <footer></footer>
@@ -212,6 +236,7 @@
     getDatabase, ref, get, set, push, update, remove, onValue, query, orderByChild, equalTo
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyCHGtQjjyEbyGxnYEmny2CsQUBQli66784",
@@ -226,12 +251,14 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const auth = getAuth(app);
+  const functionsClient = getFunctions(app);
 
   let currentUser = null;
   let myListings = {};
   let myOffers = {};
   let myEvents = [];
   let myChats = {};
+  let verifiedAccountData = null; // holds {accountNumber, bankCode, accountName} between verify and save
 
   function formatPrice(v) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0); }
 
@@ -251,6 +278,7 @@
     document.getElementById('pAddress').value = u.businessAddress || '';
     document.getElementById('pEmail').value = u.email || '';
     document.getElementById('viewProfileLink').href = `seller-profile.html?sellerId=${user.uid}`;
+    renderPayoutStatus(u);
     loadListings();
     loadOffers();
     loadEvents();
@@ -510,6 +538,85 @@
     } catch (err) {
       profileMsg.className = 'msg error';
       profileMsg.textContent = err.message.replace('Firebase: ', '');
+    }
+  });
+
+  // ---- Payout account (Paystack) ----
+  function renderPayoutStatus(u) {
+    const connectedBlock = document.getElementById('payoutConnected');
+    const setupForm = document.getElementById('payoutSetupForm');
+    if (u.paystackSubaccountCode) {
+      connectedBlock.style.display = 'block';
+      setupForm.style.display = 'none';
+      document.getElementById('payoutAccountName').textContent = u.paystackAccountName || '—';
+      document.getElementById('payoutLast4').textContent = u.paystackAccountNumberLast4 || '····';
+    } else {
+      connectedBlock.style.display = 'none';
+      setupForm.style.display = 'block';
+      loadBanks();
+    }
+  }
+
+  document.getElementById('reconnectPayoutBtn').addEventListener('click', () => {
+    document.getElementById('payoutConnected').style.display = 'none';
+    document.getElementById('payoutSetupForm').style.display = 'block';
+    loadBanks();
+  });
+
+  let banksLoaded = false;
+  async function loadBanks() {
+    if (banksLoaded) return;
+    const select = document.getElementById('payoutBank');
+    try {
+      const listBanks = httpsCallable(functionsClient, 'listBanks');
+      const result = await listBanks();
+      select.innerHTML = '<option value="">Select your bank</option>' +
+        result.data.banks.map(b => `<option value="${b.code}">${b.name}</option>`).join('');
+      banksLoaded = true;
+    } catch (err) {
+      select.innerHTML = '<option value="">Could not load banks — try again shortly</option>';
+      console.error('[Dominion] listBanks failed (payment functions may not be deployed yet):', err);
+    }
+  }
+
+  document.getElementById('verifyAccountBtn').addEventListener('click', async () => {
+    const payoutMsg = document.getElementById('payoutMsg');
+    const bankCode = document.getElementById('payoutBank').value;
+    const accountNumber = document.getElementById('payoutAccountNumber').value.trim();
+    if (!bankCode || accountNumber.length < 10) {
+      payoutMsg.className = 'msg error';
+      payoutMsg.textContent = 'Pick a bank and enter a valid 10-digit account number.';
+      return;
+    }
+    payoutMsg.className = 'msg';
+    payoutMsg.textContent = '';
+    try {
+      const resolveBankAccount = httpsCallable(functionsClient, 'resolveBankAccount');
+      const result = await resolveBankAccount({ accountNumber, bankCode });
+      verifiedAccountData = { accountNumber, bankCode, accountName: result.data.accountName };
+      document.getElementById('verifiedAccountName').value = result.data.accountName;
+      document.getElementById('verifiedNameRow').style.display = 'block';
+    } catch (err) {
+      payoutMsg.className = 'msg error';
+      payoutMsg.textContent = err.message || 'Could not verify this account. Double-check the number and bank.';
+    }
+  });
+
+  document.getElementById('confirmPayoutBtn').addEventListener('click', async () => {
+    const payoutMsg = document.getElementById('payoutMsg');
+    if (!verifiedAccountData) return;
+    payoutMsg.className = 'msg';
+    payoutMsg.textContent = 'Connecting…';
+    try {
+      const createSellerSubaccount = httpsCallable(functionsClient, 'createSellerSubaccount');
+      await createSellerSubaccount(verifiedAccountData);
+      const uSnap = await get(ref(db, `users/${currentUser.uid}`));
+      renderPayoutStatus(uSnap.val());
+      payoutMsg.className = 'msg info';
+      payoutMsg.textContent = 'Payout account connected.';
+    } catch (err) {
+      payoutMsg.className = 'msg error';
+      payoutMsg.textContent = err.message || 'Could not connect this account.';
     }
   });
 </script>

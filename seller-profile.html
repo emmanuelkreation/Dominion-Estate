@@ -260,6 +260,16 @@
   document.getElementById('messageSellerBtn').addEventListener('click', async () => {
     if (!currentUser) { window.location.href = `login.html?redirect=seller-profile.html?sellerId=${sellerId}`; return; }
     if (currentUser.uid === sellerId) return;
+    const q = query(ref(db, 'chats'), orderByChild('buyerId'), equalTo(currentUser.uid));
+    const snap = await get(q);
+    let existingId = null;
+    if (snap.exists()) {
+      // Match on buyerId + sellerId only, same as property-detail.html — a
+      // buyer who already messaged this seller from a property page should
+      // land back in that conversation, not start a fresh empty one here.
+      snap.forEach(child => { if (child.val().sellerId === sellerId) existingId = child.key; });
+    }
+    if (existingId) { window.location.href = `chat.html?chatId=${existingId}`; return; }
     const newRef = push(ref(db, 'chats'));
     await set(newRef, {
       propertyId: null, buyerId: currentUser.uid, sellerId,

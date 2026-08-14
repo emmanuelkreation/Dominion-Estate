@@ -405,17 +405,17 @@
   const offerStatus = document.getElementById('offerStatus');
   const offerMsg = document.getElementById('offerMsg');
 
-  function watchMyOffer() {
+  async function watchMyOffer() {
     if (!currentUser || !propertyId) return;
-    const q = query(ref(db, 'offers'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    onValue(q, (snap) => {
-      if (!snap.exists()) return;
-      let found = null, foundId = null;
-      snap.forEach(child => { if (child.val().propertyId === propertyId) { found = child.val(); foundId = child.key; } });
-      if (found) {
-        myOfferId = foundId;
-        renderOfferStatus(found);
-      }
+    // Look up which offer (if any) this buyer has already made on this
+    // specific property via the pointer index, then watch that one offer
+    // live — avoids ever needing a broad read across all offers.
+    const ptrSnap = await get(ref(db, `userPropertyOffers/${currentUser.uid}/${propertyId}`));
+    if (!ptrSnap.exists()) return;
+    const offerId = ptrSnap.val();
+    myOfferId = offerId;
+    onValue(ref(db, `offers/${offerId}`), (snap) => {
+      if (snap.exists()) renderOfferStatus(snap.val());
     });
   }
 

@@ -295,13 +295,27 @@
   });
 
   // ---- Offers ----
+  // Fixed: transactions/orderByChild('buyerId') used to query the
+  // top-level 'transactions' node directly, which the current rules
+  // restrict to admins only. Now reads this buyer's own transaction IDs
+  // from userTransactions/{uid} first, then fetches each one individually
+  // (permitted under the existing transactions/$transactionId rule).
   function loadTransactionsAndReviews() {
-    const txQuery = query(ref(db, 'transactions'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    onValue(txQuery, (snap) => {
+    onValue(ref(db, `userTransactions/${currentUser.uid}`), async (idxSnap) => {
       myTransactions = {};
-      if (snap.exists()) snap.forEach(child => { myTransactions[child.val().offerId] = { id: child.key, ...child.val() }; });
+      if (idxSnap.exists()) {
+        const txIds = Object.keys(idxSnap.val());
+        const txs = await Promise.all(txIds.map(async id => {
+          const tSnap = await get(ref(db, `transactions/${id}`));
+          return tSnap.exists() ? { id, ...tSnap.val() } : null;
+        }));
+        txs.filter(Boolean).forEach(tx => { myTransactions[tx.offerId] = tx; });
+      }
       renderOffers();
     });
+
+    // 'reviews' still has an open top-level read rule (".read": true), so
+    // this query is unaffected by the tightened rules and needs no change.
     const reviewQuery = query(ref(db, 'reviews'), orderByChild('buyerId'), equalTo(currentUser.uid));
     onValue(reviewQuery, (snap) => {
       reviewedTransactionIds = new Set();
@@ -310,11 +324,25 @@
     });
   }
 
+  // Fixed: same issue — offers/orderByChild('buyerId') queried the
+  // top-level 'offers' node directly, now admin-only. Reads this buyer's
+  // own offer IDs from userOffers/{uid} first, then fetches each offer
+  // individually (permitted under the existing offers/$offerId rule).
   function loadOffers() {
-    const q = query(ref(db, 'offers'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    onValue(q, (snap) => {
+    onValue(ref(db, `userOffers/${currentUser.uid}`), async (idxSnap) => {
       myOffers = {};
-      if (snap.exists()) snap.forEach(child => { myOffers[child.key] = child.val(); });
+      if (idxSnap.exists()) {
+        const offerIds = Object.keys(idxSnap.val());
+        const offers = await Promise.all(offerIds.map(async id => {
+          const oSnap = await get(ref(db, `offers/${id}`));
+          return oSnap.exists() ? { id, data: oSnap.val() } : null;
+        }));
+        offers.filter(Boolean).forEach(({ id, data }) => {
+          // Only offers this user made as the buyer belong on this page —
+          // userOffers/{uid} also includes offers where uid is the seller.
+          if (data.buyerId === currentUser.uid) myOffers[id] = data;
+        });
+      }
       renderOffers();
     });
   }
@@ -387,7 +415,6 @@
     list.querySelectorAll('[data-submit-review]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.submitReview;
-        const parent = btn.closest('[data-review], .review-form') || btn.closest('div');
         const reviewBtn = list.querySelector(`[data-review="${id}"]`);
         const rating = selectedRatings[id] || 5;
         const text = document.getElementById(`reviewText-${id}`).value.trim();
@@ -422,10 +449,20 @@
   }
 
   // ---- Unread messages ----
+  // Fixed: same pattern again — chats/orderByChild('buyerId') queried the
+  // top-level 'chats' node directly, now admin-only. Reads this buyer's
+  // chat IDs from userChats/{uid} first, then fetches each chat by ID.
   function loadChatsUnread() {
-    const q = query(ref(db, 'chats'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    onValue(q, (snap) => {
-      myChats = snap.exists() ? snap.val() : {};
+    onValue(ref(db, `userChats/${currentUser.uid}`), async (idxSnap) => {
+      myChats = {};
+      if (idxSnap.exists()) {
+        const chatIds = Object.keys(idxSnap.val());
+        const chats = await Promise.all(chatIds.map(async id => {
+          const cSnap = await get(ref(db, `chats/${id}`));
+          return cSnap.exists() ? cSnap.val() : null;
+        }));
+        chats.filter(Boolean).forEach(c => { if (c.buyerId === currentUser.uid) myChats[c.id || Math.random()] = c; });
+      }
       const unread = Object.values(myChats).filter(c => c.buyerHasUnread).length;
       document.getElementById('statUnread').textContent = unread;
     });

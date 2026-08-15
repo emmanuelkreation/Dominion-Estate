@@ -129,7 +129,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-  import { getDatabase, ref, get, set, push, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+  import { getDatabase, ref, get, set, push, update, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
   const firebaseConfig = {
@@ -257,27 +257,54 @@
     `).join('');
   }
 
+  // Fixed: this used to run a broad orderByChild('buyerId') query directly
+  // against the top-level 'chats' node, which the current rules block for
+  // non-admins (permission_denied, silently swallowed since there was no
+  // try/catch — that's why the button did nothing). Now mirrors
+  // property-detail.html: look up this buyer's own chat IDs from their
+  // userChats index, fetch each by ID (individually permitted under the
+  // existing chats/$chatId rule), and write the same index entries when
+  // creating a new chat so it's discoverable by chat.html afterward.
   document.getElementById('messageSellerBtn').addEventListener('click', async () => {
     if (!currentUser) { window.location.href = `login.html?redirect=seller-profile.html?sellerId=${sellerId}`; return; }
     if (currentUser.uid === sellerId) return;
-    const q = query(ref(db, 'chats'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    const snap = await get(q);
-    let existingId = null;
-    if (snap.exists()) {
-      // Match on buyerId + sellerId only, same as property-detail.html — a
-      // buyer who already messaged this seller from a property page should
-      // land back in that conversation, not start a fresh empty one here.
-      snap.forEach(child => { if (child.val().sellerId === sellerId) existingId = child.key; });
+
+    const btn = document.getElementById('messageSellerBtn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+
+    try {
+      const idxSnap = await get(ref(db, `userChats/${currentUser.uid}`));
+      let existingId = null;
+      if (idxSnap.exists()) {
+        const chatIds = Object.keys(idxSnap.val());
+        for (const id of chatIds) {
+          const cSnap = await get(ref(db, `chats/${id}`));
+          if (cSnap.exists() && cSnap.val().sellerId === sellerId) { existingId = id; break; }
+        }
+      }
+      if (existingId) { window.location.href = `chat.html?chatId=${existingId}`; return; }
+
+      const newRef = push(ref(db, 'chats'));
+      const chatId = newRef.key;
+      const updates = {};
+      updates[`chats/${chatId}`] = {
+        propertyId: null, buyerId: currentUser.uid, sellerId,
+        buyerName: currentUser.displayName || currentUser.email,
+        sellerName: sellerData?.displayName || 'Seller',
+        lastMessage: '', lastUpdated: Date.now(), buyerHasUnread: false, sellerHasUnread: false
+      };
+      updates[`userChats/${currentUser.uid}/${chatId}`] = true;
+      updates[`userChats/${sellerId}/${chatId}`] = true;
+      await update(ref(db), updates);
+      window.location.href = `chat.html?chatId=${chatId}`;
+    } catch (err) {
+      console.error('Failed to open chat:', err);
+      alert('Could not open the chat: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = originalText;
     }
-    if (existingId) { window.location.href = `chat.html?chatId=${existingId}`; return; }
-    const newRef = push(ref(db, 'chats'));
-    await set(newRef, {
-      propertyId: null, buyerId: currentUser.uid, sellerId,
-      buyerName: currentUser.displayName || currentUser.email,
-      sellerName: sellerData?.displayName || 'Seller',
-      lastMessage: '', lastUpdated: Date.now(), buyerHasUnread: false, sellerHasUnread: false
-    });
-    window.location.href = `chat.html?chatId=${newRef.key}`;
   });
 </script>
 </body>

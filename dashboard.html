@@ -233,7 +233,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
-    getDatabase, ref, get, set, push, update, remove, onValue, query, orderByChild, equalTo
+    getDatabase, ref, get, set, push, update, remove, onValue, query, orderByChild, equalTo, off
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
@@ -433,11 +433,23 @@
   });
 
   // ---- Offers ----
+  let offerListenerIds = new Set();
   function loadOffers() {
-    const q = query(ref(db, 'offers'), orderByChild('sellerId'), equalTo(currentUser.uid));
-    onValue(q, (snap) => {
-      myOffers = {};
-      if (snap.exists()) snap.forEach(child => { myOffers[child.key] = child.val(); });
+    onValue(ref(db, `userOffers/${currentUser.uid}`), (idxSnap) => {
+      const offerIds = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
+      offerListenerIds.forEach(id => {
+        if (!offerIds.includes(id)) { off(ref(db, `offers/${id}`)); offerListenerIds.delete(id); delete myOffers[id]; }
+      });
+      offerIds.forEach(id => {
+        if (offerListenerIds.has(id)) return;
+        offerListenerIds.add(id);
+        onValue(ref(db, `offers/${id}`), (oSnap) => {
+          if (oSnap.exists()) myOffers[id] = oSnap.val();
+          else delete myOffers[id];
+          renderOffers();
+          renderOverview();
+        });
+      });
       renderOffers();
       renderOverview();
     });
@@ -497,10 +509,22 @@
   }
 
   // ---- Chats (for unread count only) ----
+  let chatListenerIdsD = new Set();
   function loadChatsUnread() {
-    const q = query(ref(db, 'chats'), orderByChild('sellerId'), equalTo(currentUser.uid));
-    onValue(q, (snap) => {
-      myChats = snap.exists() ? snap.val() : {};
+    onValue(ref(db, `userChats/${currentUser.uid}`), (idxSnap) => {
+      const chatIds = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
+      chatListenerIdsD.forEach(id => {
+        if (!chatIds.includes(id)) { off(ref(db, `chats/${id}`)); chatListenerIdsD.delete(id); delete myChats[id]; }
+      });
+      chatIds.forEach(id => {
+        if (chatListenerIdsD.has(id)) return;
+        chatListenerIdsD.add(id);
+        onValue(ref(db, `chats/${id}`), (cSnap) => {
+          if (cSnap.exists()) myChats[id] = cSnap.val();
+          else delete myChats[id];
+          renderOverview();
+        });
+      });
       renderOverview();
     });
   }

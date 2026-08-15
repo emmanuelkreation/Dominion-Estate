@@ -438,12 +438,22 @@
     const amount = parseFloat(document.getElementById('offerAmount').value);
     if (!amount || amount <= 0) return;
     const newRef = push(ref(db, 'offers'));
+    const offerId = newRef.key;
     try {
-      await set(newRef, {
+      // Multi-path update: the offer record plus both index entries land
+      // together atomically. Security rules can cross-reference paths
+      // written in the SAME update() call, which is what lets the buyer's
+      // write into the seller's userOffers/{sellerId} node validate.
+      const updates = {};
+      updates[`offers/${offerId}`] = {
         propertyId, buyerId: currentUser.uid, sellerId: property.sellerId,
         buyerName: currentUser.displayName || currentUser.email,
         amount, status: 'pending', createdAt: Date.now(), updatedAt: Date.now()
-      });
+      };
+      updates[`userOffers/${currentUser.uid}/${offerId}`] = true;
+      updates[`userOffers/${property.sellerId}/${offerId}`] = true;
+      updates[`userPropertyOffers/${currentUser.uid}/${propertyId}`] = offerId;
+      await update(ref(db), updates);
       offerMsg.className = 'msg info';
       offerMsg.textContent = 'Offer submitted — the seller has been notified.';
       offerForm.reset();
@@ -457,25 +467,34 @@
   document.getElementById('messageSellerBtn').addEventListener('click', async () => {
     if (!currentUser) { window.location.href = `login.html?redirect=property-detail.html?id=${propertyId}`; return; }
     if (currentUser.uid === property.sellerId) return;
-    const q = query(ref(db, 'chats'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    const snap = await get(q);
+
+    // Look up which chats this buyer is part of via their own index, then
+    // fetch each one by ID to check for a match on this seller — avoids
+    // ever needing a broad read across the whole chats collection.
+    const idxSnap = await get(ref(db, `userChats/${currentUser.uid}`));
     let existingId = null;
-    if (snap.exists()) {
-      // Match on buyerId + sellerId only — not propertyId — so a buyer who
-      // previously messaged this seller from a different property (or from
-      // their profile page directly) lands back in that same conversation
-      // instead of starting a new one.
-      snap.forEach(child => { if (child.val().sellerId === property.sellerId) existingId = child.key; });
+    if (idxSnap.exists()) {
+      const chatIds = Object.keys(idxSnap.val());
+      for (const id of chatIds) {
+        const cSnap = await get(ref(db, `chats/${id}`));
+        if (cSnap.exists() && cSnap.val().sellerId === property.sellerId) { existingId = id; break; }
+      }
     }
     if (existingId) { window.location.href = `chat.html?chatId=${existingId}`; return; }
+
     const newRef = push(ref(db, 'chats'));
-    await set(newRef, {
+    const chatId = newRef.key;
+    const updates = {};
+    updates[`chats/${chatId}`] = {
       propertyId, buyerId: currentUser.uid, sellerId: property.sellerId,
       buyerName: currentUser.displayName || currentUser.email,
       sellerName: property.sellerName || 'Seller',
       lastMessage: '', lastUpdated: Date.now(), buyerHasUnread: false, sellerHasUnread: false
-    });
-    window.location.href = `chat.html?chatId=${newRef.key}`;
+    };
+    updates[`userChats/${currentUser.uid}/${chatId}`] = true;
+    updates[`userChats/${property.sellerId}/${chatId}`] = true;
+    await update(ref(db), updates);
+    window.location.href = `chat.html?chatId=${chatId}`;
   });
 </script>
 

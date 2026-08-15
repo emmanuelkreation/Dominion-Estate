@@ -108,6 +108,7 @@
   let currentRole = null; // 'buyer' | 'seller' relative to the active chat
   let allChats = {};
   let messagesListenerChatId = null;
+  let chatListenerIds = new Set(); // which chats/{id} paths we already have a live listener on
 
   function formatPrice(price) {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(price || 0);
@@ -144,26 +145,41 @@
     loadConversations();
   });
 
+  // Reads the small per-user index (just chat IDs this user is part of),
+  // then attaches one live listener per chat — each individually permitted
+  // under the existing chats/$chatId rule. No broad read across the whole
+  // chats collection is ever needed.
   function loadConversations() {
-    const asBuyer = query(ref(db, 'chats'), orderByChild('buyerId'), equalTo(currentUser.uid));
-    const asSeller = query(ref(db, 'chats'), orderByChild('sellerId'), equalTo(currentUser.uid));
-    onValue(asBuyer, (snap) => { mergeChats(snap); });
-    onValue(asSeller, (snap) => { mergeChats(snap); });
-  }
+    onValue(ref(db, `userChats/${currentUser.uid}`), (idxSnap) => {
+      const chatIds = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
 
-  function mergeChats(snap) {
-    if (snap.exists()) {
-      snap.forEach(child => { allChats[child.key] = { id: child.key, ...child.val() }; });
-    }
-    renderSidebar();
-    // Only auto-open on the FIRST time this chat becomes available (e.g. a
-    // ?chatId= link on initial load). Once it's already the open thread,
-    // re-opening on every chats-node change (which includes sending a
-    // message itself) tears down and rebuilds the panel mid-send, racing
-    // against the message that was just sent.
-    if (activeChatId && allChats[activeChatId] && messagesListenerChatId !== activeChatId) {
-      openChat(activeChatId);
-    }
+      // Stop listening to chats that dropped out of the index (rare).
+      chatListenerIds.forEach(id => {
+        if (!chatIds.includes(id)) {
+          off(ref(db, `chats/${id}`));
+          chatListenerIds.delete(id);
+          delete allChats[id];
+        }
+      });
+
+      chatIds.forEach(id => {
+        if (chatListenerIds.has(id)) return; // already listening
+        chatListenerIds.add(id);
+        onValue(ref(db, `chats/${id}`), (cSnap) => {
+          if (cSnap.exists()) allChats[id] = { id, ...cSnap.val() };
+          else delete allChats[id];
+          renderSidebar();
+          // Only auto-open on the first time this chat becomes available
+          // (e.g. a ?chatId= link on initial load) — see openChat()'s own
+          // guard for why re-opening on every change is unsafe.
+          if (activeChatId && allChats[activeChatId] && messagesListenerChatId !== activeChatId) {
+            openChat(activeChatId);
+          }
+        });
+      });
+
+      renderSidebar();
+    });
   }
 
   function renderSidebar() {

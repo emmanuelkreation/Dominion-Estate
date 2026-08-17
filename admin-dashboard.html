@@ -65,6 +65,22 @@
   .empty-row td{text-align:center; color:var(--ink-soft); padding:2rem;}
   footer{height:3rem;}
 
+  /* Section nav — one panel visible at a time instead of one long scroll */
+  .section-nav{display:flex; gap:.6rem; flex-wrap:wrap; margin:2.2rem 0 1.6rem; border-bottom:1px solid var(--line); padding-bottom:1.4rem;}
+  .section-nav button{
+    background:var(--paper-raise); border:1px solid var(--line); color:var(--ink-soft);
+    padding:.65rem 1.3rem; border-radius:100px; cursor:pointer; font-size:.86rem; font-weight:600;
+    display:flex; align-items:center; gap:.5rem;
+  }
+  .section-nav button:hover{border-color:var(--brass);}
+  .section-nav button.active{background:var(--brass); color:#241C0F; border-color:var(--brass);}
+  .section-nav button .count{
+    font-family:var(--mono); font-size:.7rem; background:rgba(255,255,255,.12); padding:.1rem .5rem; border-radius:100px;
+  }
+  .section-nav button.active .count{background:rgba(0,0,0,.15);}
+  .section-panel{display:none;}
+  .section-panel.active{display:block;}
+
   /* User search for "message a user" */
   .user-search{display:flex; gap:.6rem; margin-bottom:1rem;}
   .user-search input{

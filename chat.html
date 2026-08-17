@@ -105,7 +105,8 @@
   const params = new URLSearchParams(window.location.search);
   let activeChatId = params.get('chatId');
   let currentUser = null;
-  let currentRole = null; // 'buyer' | 'seller' relative to the active chat
+  let currentRole = null; // 'buyer' | 'seller' relative to the active chat — null when viewing as admin
+  let isAdmin = false;
   let allChats = {};
   let messagesListenerChatId = null;
   let chatListenerIds = new Set(); // which chats/{id} paths we already have a live listener on
@@ -137,19 +138,40 @@
   onAuthStateChanged(auth, async (user) => {
     if (!user) { window.location.href = 'login.html'; return; }
     currentUser = user;
-    const uSnap = await get(ref(db, `users/${user.uid}`));
-    const u = uSnap.exists() ? uSnap.val() : {};
-    document.getElementById('dashboardLink').href = u.role === 'seller'
-      ? (u.status === 'approved' ? 'dashboard.html' : 'pending-approval.html')
-      : 'buyer-dashboard.html';
+    const adminSnap = await get(ref(db, `admins/${user.uid}`));
+    isAdmin = adminSnap.exists();
+    if (isAdmin) {
+      document.getElementById('dashboardLink').href = 'admin-dashboard.html';
+      document.querySelector('.sidebar h2').textContent = 'All conversations';
+    } else {
+      const uSnap = await get(ref(db, `users/${user.uid}`));
+      const u = uSnap.exists() ? uSnap.val() : {};
+      document.getElementById('dashboardLink').href = u.role === 'seller'
+        ? (u.status === 'approved' ? 'dashboard.html' : 'pending-approval.html')
+        : 'buyer-dashboard.html';
+    }
     loadConversations();
   });
 
   // Reads the small per-user index (just chat IDs this user is part of),
   // then attaches one live listener per chat — each individually permitted
   // under the existing chats/$chatId rule. No broad read across the whole
-  // chats collection is ever needed.
+  // chats collection is ever needed. Admins instead read the full chats
+  // collection directly, which their own top-level rule already permits —
+  // there's no per-admin index to maintain since every chat is visible to
+  // every admin by design.
   function loadConversations() {
+    if (isAdmin) {
+      onValue(ref(db, 'chats'), (snap) => {
+        allChats = {};
+        if (snap.exists()) snap.forEach(child => { allChats[child.key] = { id: child.key, ...child.val() }; });
+        renderSidebar();
+        if (activeChatId && allChats[activeChatId] && messagesListenerChatId !== activeChatId) {
+          openChat(activeChatId);
+        }
+      });
+      return;
+    }
     onValue(ref(db, `userChats/${currentUser.uid}`), (idxSnap) => {
       const chatIds = idxSnap.exists() ? Object.keys(idxSnap.val()) : [];
 
@@ -190,6 +212,18 @@
       return;
     }
     list.innerHTML = items.map(c => {
+      if (isAdmin) {
+        const label = `${c.buyerName || 'Buyer'} ↔ ${c.sellerName || 'Seller'}`;
+        return `
+          <div class="convo ${c.id === activeChatId ? 'active' : ''}" data-id="${c.id}">
+            <div class="convo-avatar">${(c.buyerName || 'B').charAt(0).toUpperCase()}</div>
+            <div style="flex:1; min-width:0;">
+              <div class="convo-name"><span>${label}</span></div>
+              <div class="convo-last">${c.lastMessage || 'No messages yet'}</div>
+            </div>
+          </div>
+        `;
+      }
       const isBuyerSide = c.buyerId === currentUser.uid;
       const otherName = isBuyerSide ? (c.sellerName || 'Seller') : (c.buyerName || 'Buyer');
       const unread = isBuyerSide ? c.buyerHasUnread : c.sellerHasUnread;
@@ -227,14 +261,18 @@
     if (messagesListenerChatId === chatId) { showThreadMobile(); return; } // already open or opening — ignore the retrigger
     messagesListenerChatId = chatId;
 
-    currentRole = chat.buyerId === currentUser.uid ? 'buyer' : 'seller';
+    currentRole = isAdmin ? null : (chat.buyerId === currentUser.uid ? 'buyer' : 'seller');
 
-    // Mark read on my side
-    update(ref(db, `chats/${chatId}`), currentRole === 'buyer' ? { buyerHasUnread: false } : { sellerHasUnread: false });
+    // Mark read on my side — meaningless for admin, who isn't a participant.
+    if (!isAdmin) {
+      update(ref(db, `chats/${chatId}`), currentRole === 'buyer' ? { buyerHasUnread: false } : { sellerHasUnread: false });
+    }
 
     const propSnap = await get(ref(db, `properties/${chat.propertyId}`));
     const prop = propSnap.exists() ? propSnap.val() : null;
-    const otherName = currentRole === 'buyer' ? (chat.sellerName || 'Seller') : (chat.buyerName || 'Buyer');
+    const otherName = isAdmin
+      ? `${chat.buyerName || 'Buyer'} ↔ ${chat.sellerName || 'Seller'}`
+      : (currentRole === 'buyer' ? (chat.sellerName || 'Seller') : (chat.buyerName || 'Buyer'));
 
     const thread = document.getElementById('thread');
     thread.innerHTML = `
@@ -248,7 +286,7 @@
       </div>
       <div class="messages" id="messagesList"><div style="color:var(--ink-soft); font-size:.85rem;">Loading messages…</div></div>
       <form class="composer" id="composerForm">
-        <input type="text" id="messageInput" placeholder="Type a message…" autocomplete="off" required>
+        <input type="text" id="messageInput" placeholder="${isAdmin ? 'Message as Dominion Support…' : 'Type a message…'}" autocomplete="off" required>
         <button type="submit"><i class="fas fa-paper-plane"></i></button>
       </form>
     `;
